@@ -1,187 +1,142 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MatchState } from "./reducer";
-import { checkAchievements, glicko2Match, ACHIEVEMENTS, BOTS } from "./engine";
+import { ACHIEVEMENTS, checkAchievements, glicko2Update } from "./engine";
+import { CAMPAIGN_BOT_RATINGS } from "./botRating";
 
-// Called once, right when `state.matchOver` first becomes true for a match
-// row that isn't finalized yet. Idempotent by design: the caller checks
-// `matches.finalized` first and this function sets it, so a race between two
-// requests (both players' clients triggering the same resolve) can only ever
-// apply the result once — see the `.eq("finalized", false)` guard below.
-export async function finalizeMatch(matchId: string, state: MatchState) {
-  const admin = createAdminClient();
-
-  const { data: match } = await admin.from("matches").select("player_a, player_b, is_campaign, bot_index, finalized").eq("id", matchId).single();
-  if (!match || match.finalized) return;
-
-  if (match.is_campaign) {
-    await finalizeCampaign(admin, matchId, match, state);
-  } else {
-    await finalizePvp(admin, matchId, match, state);
+type Profile = Record<string, any>;
+type MatchRow = {id:string; player_a:string;player_b:string|null;mode:string;bot_index:number|null;bot_rating:number|null;state:MatchState;finalized:boolean};
+const STREAK_REWARDS:Record<number,number>={2:2,3:4,5:8,10:15};
+function stats(base:any, ms:MatchState["matchStats"][number],won:boolean){return {
+ blackjacks:(base?.blackjacks||0)+ms.blackjacks,
+ busts:(base?.busts||0)+ms.busts,
+ doubles:(base?.doubles||0)+ms.doubles,
+ splits:(base?.splits||0)+ms.splits,
+ kos:(base?.kos||0)+(won?1:0),
+ comebackWins:(base?.comebackWins||0)+(won&&ms.usedComeback?1:0),
+ ironWillSaves:(base?.ironWillSaves||0)+ms.ironWillSaves
+};}
+function achievementInput(p:Profile){return {
+ wins:p.wins||0,bestStreak:p.best_streak||0,matches_played:p.matches_played||0,
+ rating:p.rating||1500,campaign_pos:p.campaign_pos||0,campaign_wins:p.campaign_wins||0,
+ perks:[...new Set([...(p.perks||[]),...Object.keys(p.relic_levels||{}).filter(k=>Number(p.relic_levels[k])>0)])],
+ tokens_earned_total:p.tokens_earned_total||0,achievements:p.achievements||[],stats:p.stats
+};}
+function createUpdate(p:Profile,mode:string,index:0|1,m:MatchRow):{update:Profile; event:Profile; display:Profile; newAchievements:string[]}{
+ const state=m.state;
+ const won=state.winnerIndex===index, lost=state.winnerIndex===1-index;
+ const updated:Profile={...p};
+ updated.matches_played=(p.matches_played||0)+1;
+ updated.stats=stats(p.stats,state.matchStats[index],won);
+ let award=0;
+ let rating={rating:Number(p.rating),rd:Number(p.rd),vol:Number(p.vol)};
+ if(mode==='pvp'){
+   const prev=Number(p.streak||0);
+   updated.streak=won?prev+1:lost?0:prev;
+   updated.best_streak=Math.max(Number(p.best_streak||0),updated.streak);
+   if(won){updated.wins=(p.wins||0)+1;award+=4+state.players[index].bjWins+ (STREAK_REWARDS[updated.streak]||0);}
+   else {if(lost)updated.losses=(p.losses||0)+1;award+=2+state.players[index].bjWins;}
+ } else if(mode==='campaign'){
+   if(won){
+     award=(m.bot_index??0)+1;
+     updated.campaign_wins=(p.campaign_wins||0)+1;
+     updated.campaign_pos=Math.min(9,(m.bot_index??0)+1);
+     updated.campaign_defeated=[...new Set([...(p.campaign_defeated||[]),m.bot_index??0])].sort((a,b)=>a-b);
+   } else if(lost) updated.campaign_pos=Math.max(0,(m.bot_index??0)-1);
+ } else if(mode==='random'){
+   award=won?3+Math.max(0,Math.min(6,Math.round(((m.bot_rating||1500)-p.rating+250)/150))):1;
+   award+=state.players[index].bjWins;
+ }
+ if(mode!=='pvp'){
+   const score=state.winnerIndex===-1?0.5:won?1:0;
+   const oppRating=Number(m.bot_rating??CAMPAIGN_BOT_RATINGS[m.bot_index??0]??1500);
+   rating=glicko2Update(Number(p.rating),Number(p.rd),Number(p.vol),oppRating,mode==='campaign'?85:110,score);
+ } else {
+   // Opponent is assigned by finalizeMatch after both profiles are read.
+ }
+ if(mode!=='pvp'){
+  if(mode==='campaign'&&won){
+   // Diminishing rewards for farming the same campaign bot.
+   // `campaign_defeated` captures first clear but repeated clears still award less rating.
+   const hadBeat=(p.campaign_defeated||[]).includes(m.bot_index??0);
+   if(hadBeat) rating.rating=Math.round(Number(p.rating)+(rating.rating-Number(p.rating))*0.35);
   }
+  updated.rating=rating.rating;updated.rd=rating.rd;updated.vol=rating.vol;
+ }
+ updated.tokens_earned_total=Number(p.tokens_earned_total||0)+award;
+ const ach=checkAchievements(achievementInput(updated));
+ updated.achievements=[...new Set([...(p.achievements||[]),...ach])];
+ const event={user_id:p.id,won,blackjacks:state.matchStats[index].blackjacks,
+  doubles:state.matchStats[index].doubles,splits:state.matchStats[index].splits,busts:state.matchStats[index].busts,
+  class_id:state.players[index].classId,low_hp_win:won&&state.players[index].hp>0&&state.players[index].hp<=state.players[index].maxHp*0.2};
+ const display={tokens:award, rating:0,streakBonus:mode==='pvp'&&won?STREAK_REWARDS[updated.streak]||0:0,bounty:0,achievements:ach};
+ updated.token_award=award;
+ updated.version=p.reward_version||0;
+ return {update:updated,event,display,newAchievements:ach};
 }
 
-async function finalizePvp(admin: ReturnType<typeof createAdminClient>, matchId: string, match: any, state: MatchState) {
-  const [{ data: pa }, { data: pb }] = await Promise.all([
-    admin.from("profiles").select("*").eq("id", match.player_a).single(),
-    admin.from("profiles").select("*").eq("id", match.player_b).single(),
-  ]);
-  if (!pa || !pb) return;
-
-  const winnerIndex = state.winnerIndex;
-  let ratingA = { rating: pa.rating, rd: pa.rd, vol: pa.vol };
-  let ratingB = { rating: pb.rating, rd: pb.rd, vol: pb.vol };
-  const updates: Record<string, any>[] = [
-    { ...pa, matches_played: pa.matches_played + 1 },
-    { ...pb, matches_played: pb.matches_played + 1 },
-  ];
-
-  if (winnerIndex !== -1 && winnerIndex !== null) {
-    const scoreA = winnerIndex === 0 ? 1 : 0;
-    const [newA, newB] = glicko2Match(ratingA, ratingB, scoreA);
-    updates[0].rating = newA.rating;
-    updates[0].rd = newA.rd;
-    updates[0].vol = newA.vol;
-    updates[1].rating = newB.rating;
-    updates[1].rd = newB.rd;
-    updates[1].vol = newB.vol;
-    if (winnerIndex === 0) {
-      updates[0].wins = pa.wins + 1;
-      updates[0].streak = pa.streak + 1;
-      updates[0].best_streak = Math.max(pa.best_streak, pa.streak + 1);
-      updates[1].losses = pb.losses + 1;
-      updates[1].streak = 0;
-    } else {
-      updates[1].wins = pb.wins + 1;
-      updates[1].streak = pb.streak + 1;
-      updates[1].best_streak = Math.max(pb.best_streak, pb.streak + 1);
-      updates[0].losses = pa.losses + 1;
-      updates[0].streak = 0;
+/** Safe to retry. SQL locks the match row and updates rewards, ratings and event log atomically. */
+export async function finalizeMatch(matchId:string){
+ const admin=createAdminClient();
+ for(let attempt=0;attempt<4;attempt++){
+  const {data:match,error:matchError}=await admin.from('matches')
+    .select('id,player_a,player_b,mode,bot_index,bot_rating,state,finalized')
+    .eq('id',matchId).single();
+  if(matchError||!match) throw new Error(matchError?.message||'Match missing');
+  const m=match as MatchRow;
+  if(m.finalized)return;
+  if(!m.state.matchOver)return;
+  const ids=m.mode==='pvp'?[m.player_a,m.player_b!]:[m.player_a];
+  const {data:profiles,error:profilesError}=await admin.from('profiles').select('*').in('id',ids);
+  if(profilesError||!profiles||profiles.length!==ids.length)throw new Error(profilesError?.message||'Profiles missing');
+  const a=profiles.find((p:Profile)=>p.id===m.player_a)!;
+  const b=m.player_b?profiles.find((p:Profile)=>p.id===m.player_b):null;
+  const first=createUpdate(a,m.mode,0,m);
+  const second=b?createUpdate(b,m.mode,1,m):null;
+  if(b&&second){
+   const scoreA=m.state.winnerIndex===-1?0.5:m.state.winnerIndex===0?1:0;
+   const ar=glicko2Update(a.rating,a.rd,a.vol,b.rating,b.rd,scoreA);
+   const br=glicko2Update(b.rating,b.rd,b.vol,a.rating,a.rd,1-scoreA);
+   Object.assign(first.update,ar);Object.assign(second.update,br);
+   first.display.rating=ar.rating-a.rating;second.display.rating=br.rating-b.rating;
+   // Achievements based on updated PVP ratings, e.g. High Roller.
+   for(const c of [first,second]){
+     const newAch=checkAchievements(achievementInput(c.update));
+     c.newAchievements=[...new Set([...c.newAchievements,...newAch])];
+     c.update.achievements=[...new Set([...c.update.achievements,...newAch])];
+     c.display.achievements=c.newAchievements;
+   }
+  } else first.display.rating=first.update.rating-a.rating;
+  // SQL validates opponent's *current* streak and grants bounty once per pair/week.
+  if(b&&m.state.winnerIndex===0&&b.streak>=5)first.update.bounty_target=b.id;
+  if(b&&second&&m.state.winnerIndex===1&&a.streak>=5)second.update.bounty_target=a.id;
+  const contributions=[first,...(second?[second]:[])];
+  const updates=contributions.map(c=>({
+   id:c.update.id,version:c.update.version,token_award:c.update.token_award,bounty_target:c.update.bounty_target||null,
+   rating:c.update.rating,rd:c.update.rd,vol:c.update.vol,
+   wins:c.update.wins,losses:c.update.losses,streak:c.update.streak,best_streak:c.update.best_streak,
+   matches_played:c.update.matches_played,campaign_pos:c.update.campaign_pos,campaign_wins:c.update.campaign_wins,
+   campaign_defeated:c.update.campaign_defeated||[],stats:c.update.stats,achievements:c.update.achievements
+  }));
+  const rewards={a:first.display,...(second?{b:second.display}:{})};
+  const {data:result,error}=await admin.rpc('complete_match_v3',{
+   p_id:matchId,p_updates:updates,p_events:contributions.map(c=>c.event),p_rewards:rewards
+  });
+  if(!error){
+    if(!result?.already){
+      const notices=contributions.flatMap((c,index)=>[
+        {user_id:c.update.id,type:'match_result',payload:{won:c.event.won,
+         opponent:index===0?m.state.players[1].name:m.state.players[0].name}},
+        ...c.newAchievements.map(id=>({user_id:c.update.id,type:'achievement',payload:{name:ACHIEVEMENTS.find(x=>x.id===id)?.name||id}}))
+      ]);
+      // Informational only; financial operations already committed atomically.
+      await admin.from('notifications').insert(notices);
     }
+    return;
   }
-
-  const tokensA = (winnerIndex === -1 || winnerIndex === null ? 2 : winnerIndex === 0 ? 4 : 2) + (state.players[0].bjWins || 0);
-  const tokensB = (winnerIndex === -1 || winnerIndex === null ? 2 : winnerIndex === 1 ? 4 : 2) + (state.players[1].bjWins || 0);
-  updates[0].tokens = pa.tokens + tokensA;
-  updates[0].tokens_earned_total = pa.tokens_earned_total + tokensA;
-  updates[1].tokens = pb.tokens + tokensB;
-  updates[1].tokens_earned_total = pb.tokens_earned_total + tokensB;
-
-  const msA = state.matchStats[0];
-  const msB = state.matchStats[1];
-  updates[0].stats = mergeStats(pa.stats, msA, winnerIndex === 0);
-  updates[1].stats = mergeStats(pb.stats, msB, winnerIndex === 1);
-
-  const newAchA = checkAchievements(toAchInput(updates[0]));
-  const newAchB = checkAchievements(toAchInput(updates[1]));
-  updates[0].achievements = [...pa.achievements, ...newAchA];
-  updates[1].achievements = [...pb.achievements, ...newAchB];
-
-  await Promise.all([
-    admin
-      .from("profiles")
-      .update(stripId(updates[0]))
-      .eq("id", pa.id),
-    admin
-      .from("profiles")
-      .update(stripId(updates[1]))
-      .eq("id", pb.id),
-    admin.from("matches").update({ finalized: true, winner: winnerIndex === 0 ? pa.id : winnerIndex === 1 ? pb.id : null }).eq("id", matchId).eq("finalized", false),
-  ]);
-
-  const notifs = [
-    {
-      user_id: pa.id,
-      type: "match_result",
-      payload: { won: winnerIndex === 0, opponent: pb.username },
-    },
-    {
-      user_id: pb.id,
-      type: "match_result",
-      payload: { won: winnerIndex === 1, opponent: pa.username },
-    },
-    ...newAchA.map((id) => ({ user_id: pa.id, type: "achievement", payload: { name: ACHIEVEMENTS.find((a) => a.id === id)?.name } })),
-    ...newAchB.map((id) => ({ user_id: pb.id, type: "achievement", payload: { name: ACHIEVEMENTS.find((a) => a.id === id)?.name } })),
-  ];
-  await admin.from("notifications").insert(notifs);
-}
-
-async function finalizeCampaign(admin: ReturnType<typeof createAdminClient>, matchId: string, match: any, state: MatchState) {
-  const { data: p } = await admin.from("profiles").select("*").eq("id", match.player_a).single();
-  if (!p) return;
-
-  const botIndex = match.bot_index ?? 0;
-  const won = state.winnerIndex === 0;
-  let tokensEarned = 0;
-  let newPos = p.campaign_pos;
-  let campaignWins = p.campaign_wins;
-
-  if (won) {
-    tokensEarned = botIndex + 1;
-    newPos = Math.min(BOTS.length - 1, botIndex + 1);
-    campaignWins = p.campaign_wins + 1;
-  } else if (state.winnerIndex === 1) {
-    newPos = Math.max(0, botIndex - 1);
-  }
-
-  const ms = state.matchStats[0];
-  const update: Record<string, any> = {
-    matches_played: p.matches_played + 1,
-    tokens: p.tokens + tokensEarned,
-    tokens_earned_total: p.tokens_earned_total + tokensEarned,
-    campaign_pos: newPos,
-    campaign_wins: campaignWins,
-    stats: mergeStats(p.stats, ms, won),
-  };
-
-  const newAch = checkAchievements(toAchInput({ ...p, ...update }));
-  update.achievements = [...p.achievements, ...newAch];
-
-  await Promise.all([
-    admin.from("profiles").update(update).eq("id", p.id),
-    admin
-      .from("matches")
-      .update({ finalized: true, winner: won ? p.id : null })
-      .eq("id", matchId)
-      .eq("finalized", false),
-  ]);
-
-  await admin.from("notifications").insert([
-    {
-      user_id: p.id,
-      type: "match_result",
-      payload: { won, opponent: BOTS[botIndex].name },
-    },
-    ...newAch.map((id) => ({ user_id: p.id, type: "achievement", payload: { name: ACHIEVEMENTS.find((a) => a.id === id)?.name } })),
-  ]);
-}
-
-function mergeStats(base: any, ms: MatchState["matchStats"][number], won: boolean) {
-  return {
-    blackjacks: (base?.blackjacks || 0) + ms.blackjacks,
-    busts: (base?.busts || 0) + ms.busts,
-    doubles: (base?.doubles || 0) + ms.doubles,
-    splits: (base?.splits || 0) + ms.splits,
-    kos: (base?.kos || 0) + (won ? 1 : 0),
-    comebackWins: (base?.comebackWins || 0) + (won && ms.usedComeback ? 1 : 0),
-    ironWillSaves: (base?.ironWillSaves || 0) + ms.ironWillSaves,
-  };
-}
-function toAchInput(u: any) {
-  return {
-    wins: u.wins ?? 0,
-    bestStreak: u.best_streak ?? 0,
-    matches_played: u.matches_played ?? 0,
-    rating: u.rating ?? 1500,
-    campaign_pos: u.campaign_pos ?? 0,
-    campaign_wins: u.campaign_wins ?? 0,
-    perks: [...new Set([...(u.perks ?? []), ...Object.keys(u.relic_levels ?? {}).filter(k => Number(u.relic_levels[k]) > 0)])],
-    tokens_earned_total: u.tokens_earned_total ?? 0,
-    achievements: u.achievements ?? [],
-    stats: u.stats ?? { blackjacks: 0, busts: 0, doubles: 0, splits: 0, kos: 0, comebackWins: 0, ironWillSaves: 0 },
-  };
-}
-function stripId(u: Record<string, any>) {
-  const { id, created_at, ...rest } = u;
-  return rest;
+  if(error.message.includes('STALE_PROFILE'))continue;
+  if(error.message.includes('deadlock detected')||error.message.includes('could not serialize'))continue;
+  throw new Error(`finalizeMatch: ${error.message}`);
+ }
+ throw new Error('finalizeMatch: profiles changed too often, please retry');
 }
