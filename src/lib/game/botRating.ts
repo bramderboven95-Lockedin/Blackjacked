@@ -1,59 +1,126 @@
 
 import type { BotDefinition } from "./engine";
 
-// Campaign ratings blijven behouden.
+/**
+ * Blackjacked — Simulation calibrated bot ratings.
+ *
+ * Reference character:
+ * Rating: 1500
+ * HP: 100
+ * ATK: 10
+ * DEF: 10
+ * Chips: 1
+ * No Relics
+ * Basic strategy
+ *
+ * Campaign: 5000 simulated matches per bot.
+ * Random: 140 tested stat combinations,
+ * 1000 matches per combination.
+ */
+
+// New Campaign ratings based on simulations.
 export const CAMPAIGN_BOT_RATINGS = [
-  900, 1050, 1175, 1300, 1425,
-  1550, 1680, 1800, 1925, 2100,
+  1158,
+  1251,
+  1442,
+  1506,
+  1569,
+  1706,
+  1772,
+  1852,
+  1917,
+  2143,
 ] as const;
 
 export type ChallengerDifficulty = "easy" | "hard";
 
+const clamp = (
+  n: number,
+  low: number,
+  high: number
+) => Math.min(high, Math.max(low, n));
+
 /**
- * Botrating op basis van daadwerkelijke stats.
+ * Calculate the estimated rating of a Random Challenger.
  *
- * Easy: ongeveer 850–1660.
- * Hard: ongeveer 1725–2800.
+ * Easy:
+ * ATK 1–19
+ * DEF 1–19
+ * HP 50–150
  *
- * Dit is een gameplay-heuristiek, geen gekalibreerde
- * statistische voorspelling.
+ * Hard:
+ * ATK 20–40
+ * DEF 20–40
+ * HP 151–350
  */
-export function randomBotRating(bot: BotDefinition): number {
-  const aiBonus: Record<string, number> = {
-    naive: -30,
-    basic: 0,
-    smart: 35,
-    optimal: 70,
-  };
+export function randomBotRating(
+  bot: BotDefinition
+): number {
 
-  const attackScore = bot.atk * 18;
-  const defenseScore = bot.def * 14;
-  const healthScore = (bot.hp - 50) * 2;
+  const hard =
+    bot.difficulty === "hard" ||
+    (
+      bot.difficulty !== "easy" &&
+      bot.atk >= 20 &&
+      bot.def >= 20 &&
+      bot.hp >= 151
+    );
 
-  const estimated =
-    850 +
-    attackScore +
-    defenseScore +
-    healthScore +
-    (aiBonus[bot.ai] ?? 0);
+  // EASY CHALLENGER
+  if (!hard) {
 
-  return Math.max(
-    800,
-    Math.round(estimated)
+    const a = clamp((bot.atk - 1) / 18, 0, 1);
+    const d = clamp((bot.def - 1) / 18, 0, 1);
+    const h = clamp((bot.hp - 50) / 100, 0, 1);
+    const c = clamp((bot.chips - 1) / 2, 0, 1);
+
+    const ai = bot.ai === "basic" ? 1 : 0;
+
+    const estimate =
+      815.75 +
+      278.84 * a +
+      212.59 * d +
+      552.21 * h +
+      109.89 * ai +
+      180.94 * d * h +
+      39.59 * a * c +
+      22.73 * h * c +
+      52.13 * d * d;
+
+    return Math.round(
+      clamp(estimate, 800, 2300)
+    );
+  }
+
+  // HARD CHALLENGER
+
+  const a = clamp((bot.atk - 20) / 20, 0, 1);
+  const d = clamp((bot.def - 20) / 20, 0, 1);
+  const h = clamp((bot.hp - 151) / 199, 0, 1);
+  const c = clamp((bot.chips - 2) / 3, 0, 1);
+
+  const estimate =
+    2246.03 +
+    128.78 * a +
+    440.27 * d +
+    376.98 * h +
+    20.99 * c +
+    40.16 * a * c +
+    24.32 * h * c +
+    253.35 * d * d;
+
+  return Math.round(
+    clamp(estimate, 2200, 3600)
   );
 }
 
 /**
- * Extra bescherming voor wedstrijden tegen bots.
+ * Dynamic Glicko protection for bot matches.
  *
- * Een sterkere bot verslaan geeft potentieel veel rating.
- * Van een sterkere bot verliezen kost relatief weinig.
+ * Beating a stronger bot can grant more rating.
+ * Losing against a stronger bot costs relatively little.
  *
- * Tegen een zwakke bot geldt het omgekeerde.
- *
- * De bestaande Glicko-2-berekening blijft de basis.
- * We beperken uitsluitend extreme uitschieters
- * omdat de rating van gegenereerde bots geschat is.
+ * PvP remains unchanged.
  */
 export function protectedBotRating(
   previous: {
@@ -61,21 +128,24 @@ export function protectedBotRating(
     rd: number;
     vol: number;
   },
+
   calculated: {
     rating: number;
     rd: number;
     vol: number;
   },
+
   opponentRating: number
 ) {
-  const difference = opponentRating - previous.rating;
 
-  // Verwachte winstkans op basis van ratingverschil.
+  const difference =
+    opponentRating - previous.rating;
+
   const expectedWin =
-    1 / (1 + Math.pow(10, difference / 400));
+    1 / (
+      1 + Math.pow(10, difference / 400)
+    );
 
-  // Dynamische grenzen: minimaal circa 8,
-  // maximaal circa 73 ratingpunten.
   const maxGain = Math.round(
     8 + 65 * (1 - expectedWin)
   );
@@ -87,9 +157,10 @@ export function protectedBotRating(
   const actualChange =
     calculated.rating - previous.rating;
 
-  const adjustedChange = Math.max(
+  const adjustedChange = clamp(
+    actualChange,
     -maxLoss,
-    Math.min(maxGain, actualChange)
+    maxGain
   );
 
   return {
@@ -97,7 +168,6 @@ export function protectedBotRating(
       previous.rating + adjustedChange
     ),
 
-    // Beperk de daling van ratingonzekerheid per botmatch.
     rd: Math.max(
       45,
       Math.round(
