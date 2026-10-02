@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/profile";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { matchReducer } from "@/lib/game/reducer";
-import { PERK_DEFS } from "@/lib/game/engine";
+import { validRelics } from "@/lib/game/relics";
 
 export async function POST(request: Request) {
   const { user } = await requireUser();
@@ -39,15 +39,12 @@ export async function POST(request: Request) {
 
   const { data: players } = await admin
     .from("profiles")
-    .select("id, username, preferred_class, preferred_perks, perks")
+    .select("id, username, preferred_class, relic_levels, equipped_relics")
     .in("id", [challenge.challenger_id, challenge.opponent_id]);
 
   const a = players?.find((p) => p.id === challenge.challenger_id);
   const b = players?.find((p) => p.id === challenge.opponent_id);
   if (!a || !b) return NextResponse.json({ error: "Spelers niet gevonden." }, { status: 500 });
-
-  const validPerks = (preferred: string[], owned: string[]) =>
-    (preferred || []).filter((pid: string) => owned.includes(pid) && PERK_DEFS.some((p) => p.id === pid)).slice(0, 2);
 
   const initState = matchReducer(null, {
     type: "INIT",
@@ -55,8 +52,12 @@ export async function POST(request: Request) {
     nameB: b.username,
     classA: a.preferred_class || "dealer",
     classB: b.preferred_class || "dealer",
-    perksA: validPerks(a.preferred_perks || [], a.perks || []),
-    perksB: validPerks(b.preferred_perks || [], b.perks || []),
+    perksA: [],
+    relicLevelsA: a.relic_levels || {},
+    equippedRelicsA: validRelics(a.relic_levels || {}, a.equipped_relics || []),
+    perksB: [],
+    relicLevelsB: b.relic_levels || {},
+    equippedRelicsB: validRelics(b.relic_levels || {}, b.equipped_relics || []),
   });
 
   const { data: match, error: matchError } = await admin
