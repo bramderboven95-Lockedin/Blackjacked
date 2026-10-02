@@ -233,7 +233,7 @@ export default function ChallengerPage() {
             </div>
 
             <p className="text-dim text-xs">
-              Geschatte rating: 850–1660.
+              Geschatte rating: 800–2300.
               Dynamische Glicko-beloningen.
             </p>
 
@@ -294,7 +294,7 @@ export default function ChallengerPage() {
             </div>
 
             <p className="text-dim text-xs">
-              Geschatte rating: 1725–2800.
+              Geschatte rating: 2200–3600.
               Meer ratingpotentieel bij een overwinning.
             </p>
 
