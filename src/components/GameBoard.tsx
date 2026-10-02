@@ -147,6 +147,22 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
 
   return (
     <main className="min-h-screen px-4 pt-6 pb-10 max-w-lg mx-auto flex flex-col gap-3">
+      
+{/* NAVIGATIE TIJDENS DE WEDSTRIJD */}
+
+<div className="flex items-center justify-between mb-2">
+  <Link
+    href="/dashboard"
+    className="btn-ghost !py-2 !px-3 text-xs"
+  >
+    ← Hoofdmenu
+  </Link>
+
+  <span className="text-dim text-xs">
+    {state.isCampaign ? "CAMPAIGN" : "1 VS 1"}
+  </span>
+</div>
+
       <div className="flex items-center justify-between font-display text-sm text-dim tracking-wide">
         <span>
           Ronde {state.roundNum} / 3 &middot; {"\u{1F3C6}"} {state.roundsWon[0]}&ndash;{state.roundsWon[1]}
@@ -208,7 +224,7 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
         </div>
       )}
 
-      {!state.matchOver && !state.isCampaign && (
+      {!state.matchOver && (
         <div className="flex justify-center">
           {confirmForfeit ? (
             <div className="panel !py-2.5 flex items-center gap-3 text-sm">
