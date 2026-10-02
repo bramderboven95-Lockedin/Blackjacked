@@ -1,3 +1,4 @@
+import { CAMPAIGN_BOT_RATINGS } from "@/lib/game/botRating";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/profile";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -9,10 +10,10 @@ async function findActive(userId:string) {
   const admin=createAdminClient();
   const {data,error}=await admin.from("matches")
     .select("id,state,bot_index").eq("player_a",userId)
-    .eq("is_campaign",true).eq("finalized",false)
+    .eq("is_campaign",true).eq("mode","campaign").eq("finalized",false)
     .order("created_at",{ascending:false}).limit(30);
   if(error) throw error;
-  return (data||[]).find(m=>!(m.state as MatchState).matchOver) || null;
+  return (data||[]).find((m:{state:MatchState})=>!(m.state as MatchState).matchOver) || null;
 }
 export async function GET(){
   const {user}=await requireUser();
@@ -37,11 +38,12 @@ export async function POST() {
     type:"INIT",nameA:profile.username,classA:profile.preferred_class||"dealer",
     perksA:[],relicLevelsA:profile.relic_levels||{},
     equippedRelicsA:validRelics(profile.relic_levels||{},profile.equipped_relics||[]),
-    isCampaign:true,botIndex
+    isCampaign:true,botIndex,matchMode:"campaign"
   });
-  const {data:match,error:insertError}=await admin.from("matches").insert({
-    player_a:user.id,player_b:null,is_campaign:true,bot_index:botIndex,state:initState
-  }).select("id").single();
-  if(insertError||!match) return NextResponse.json({error:insertError?.message||"Kon match niet starten."},{status:500});
-  return NextResponse.json({matchId:match.id,resumed:false});
+  const {data:created,error:createError}=await admin.rpc("create_bot_match_v3",{
+    p_user:user.id,p_mode:"campaign",p_bot_index:botIndex,
+    p_bot_rating:CAMPAIGN_BOT_RATINGS[botIndex],p_state:initState
+  });
+  if(createError||!created) return NextResponse.json({error:createError?.message||"Kon match niet starten. Probeer opnieuw."},{status:500});
+  return NextResponse.json(created);
 }
