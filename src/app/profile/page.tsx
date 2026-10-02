@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getOwnProfile } from "@/lib/profile";
 import RankBadge from "@/components/RankBadge";
 import TabBar from "@/components/TabBar";
@@ -10,7 +11,7 @@ export default async function ProfilePage() {
 
   const { data: matches } = await supabase
     .from("matches")
-    .select("id, player_a, player_b, is_campaign, bot_index, winner, state, updated_at, finalized")
+    .select("id, player_a, player_b, is_campaign, mode, bot_index, rewards, winner, state, updated_at, finalized")
     .or(`player_a.eq.${user.id},player_b.eq.${user.id}`)
     .eq("finalized", true)
     .order("updated_at", { ascending: false })
@@ -40,8 +41,8 @@ export default async function ProfilePage() {
           </div>
         </div>
         <div className="grid grid-cols-4 gap-2">
-          <StatBox label="Winst" value={profile.wins} />
-          <StatBox label="Verlies" value={profile.losses} />
+          <StatBox label="PvP winst" value={profile.wins} />
+          <StatBox label="PvP verlies" value={profile.losses} />
           <StatBox label="Beste streak" value={profile.best_streak} />
           <StatBox label="Blackjacks" value={stats.blackjacks || 0} />
         </div>
@@ -56,9 +57,11 @@ export default async function ProfilePage() {
             {(matches || []).map((m) => {
               const won = m.winner === user.id;
               const isDraw = !m.winner;
-              const opponentName = m.is_campaign
-                ? BOTS[m.bot_index ?? 0]?.name || "Bot"
+              const opponentName = m.mode === "random"
+                ? m.state?.botDetails?.name || "Random Challenger"
+                : m.is_campaign ? BOTS[m.bot_index ?? 0]?.name || "Bot"
                 : opponentMap.get(m.player_a === user.id ? m.player_b! : m.player_a) || "Onbekend";
+              const myReward = m.player_a === user.id ? m.rewards?.a : m.rewards?.b;
               const roundsWon = m.state?.roundsWon;
               return (
                 <div key={m.id} className="flex items-center gap-2.5 bg-bgalt rounded-lg px-3 py-2 text-sm">
@@ -73,11 +76,10 @@ export default async function ProfilePage() {
                     {opponentName}
                     {m.is_campaign && <span className="text-xs ml-1">{"\u{1F916}"}</span>}
                   </span>
-                  {roundsWon && (
-                    <span className="text-dim text-xs">
-                      {roundsWon[0]}&ndash;{roundsWon[1]}
-                    </span>
-                  )}
+                  <div className="text-right">
+                    {roundsWon && <span className="text-dim text-xs block">{roundsWon[0]}&ndash;{roundsWon[1]}</span>}
+                    {myReward && <span className="text-xs text-goldbright">{myReward.rating >= 0 ? "+" : ""}{myReward.rating} R · +{myReward.tokens} 🪙</span>}
+                  </div>
                 </div>
               );
             })}
@@ -86,7 +88,10 @@ export default async function ProfilePage() {
       </div>
 
       <div className="panel">
-        <h2 className="font-display text-lg text-gold mb-1">Badges</h2>
+        <div className="flex justify-between gap-2 items-center mb-1">
+          <h2 className="font-display text-lg text-gold">Badges</h2>
+          <Link href="/rewards" className="text-teal text-xs underline">Claim beloningen</Link>
+        </div>
         <p className="text-dim text-xs mb-3">
           {achievements.length} / {ACHIEVEMENTS.length} behaald
         </p>
