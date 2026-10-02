@@ -2,7 +2,10 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MatchState } from "./reducer";
 import { ACHIEVEMENTS, checkAchievements, glicko2Update } from "./engine";
-import { CAMPAIGN_BOT_RATINGS } from "./botRating";
+import {
+  CAMPAIGN_BOT_RATINGS,
+  protectedBotRating,
+} from "./botRating";
 
 type Profile = Record<string, any>;
 type MatchRow = {id:string; player_a:string;player_b:string|null;mode:string;bot_index:number|null;bot_rating:number|null;state:MatchState;finalized:boolean};
@@ -50,7 +53,28 @@ function createUpdate(p:Profile,mode:string,index:0|1,m:MatchRow):{update:Profil
  if(mode!=='pvp'){
    const score=state.winnerIndex===-1?0.5:won?1:0;
    const oppRating=Number(m.bot_rating??CAMPAIGN_BOT_RATINGS[m.bot_index??0]??1500);
-   rating=glicko2Update(Number(p.rating),Number(p.rd),Number(p.vol),oppRating,mode==='campaign'?85:110,score);
+   
+const previousRating = {
+  rating: Number(p.rating),
+  rd: Number(p.rd),
+  vol: Number(p.vol),
+};
+
+const calculatedRating = glicko2Update(
+  previousRating.rating,
+  previousRating.rd,
+  previousRating.vol,
+  oppRating,
+  mode === "campaign" ? 85 : 110,
+  score
+);
+
+rating = protectedBotRating(
+  previousRating,
+  calculatedRating,
+  oppRating
+);
+
  } else {
    // Opponent is assigned by finalizeMatch after both profiles are read.
  }
