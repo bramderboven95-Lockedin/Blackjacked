@@ -1,3 +1,4 @@
+import type { RelicLevels } from "./relics";
 // ============================================================================
 // Server-authoritative match reducer.
 // This is the ONLY place match state changes. The API route
@@ -95,7 +96,7 @@ export interface MatchState {
 }
 
 export type Action =
-  | { type: "INIT"; nameA: string; nameB?: string; classA: string; classB?: string; perksA: string[]; perksB?: string[]; isCampaign?: boolean; botIndex?: number }
+  | { type: "INIT"; nameA: string; nameB?: string; classA: string; classB?: string; perksA: string[]; perksB?: string[]; relicLevelsA?: RelicLevels; relicLevelsB?: RelicLevels; equippedRelicsA?: string[]; equippedRelicsB?: string[]; isCampaign?: boolean; botIndex?: number }
   | { type: "BET"; player: 0 | 1; amount: number }
   | { type: "CHOOSE"; player: 0 | 1; subIndex: number; choice: "hit" | "stand" | "double" | "split" }
   | { type: "RESOLVE_ROUND" }
@@ -147,10 +148,10 @@ export function matchReducer(state: MatchState | null, action: Action): MatchSta
   switch (action.type) {
     case "INIT": {
       const players: [Player, Player] = action.isCampaign
-        ? [buildPlayer(action.nameA, action.classA, action.perksA), buildBotPlayer(action.botIndex!)]
+        ? [buildPlayer(action.nameA, action.classA, action.perksA, action.relicLevelsA, action.equippedRelicsA), buildBotPlayer(action.botIndex!)]
         : [
-            buildPlayer(action.nameA, action.classA, action.perksA),
-            buildPlayer(action.nameB!, action.classB!, action.perksB || []),
+            buildPlayer(action.nameA, action.classA, action.perksA, action.relicLevelsA, action.equippedRelicsA),
+            buildPlayer(action.nameB!, action.classB!, action.perksB || [], action.relicLevelsB, action.equippedRelicsB),
           ];
       return autoSkipZeroChipBets({
         players,
