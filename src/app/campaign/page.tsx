@@ -155,7 +155,7 @@ export default function CampaignPage() {
       <p className="text-dim text-sm -mt-2">
         Versla een bot om door te schuiven naar een sterkere.
         Verlies je, dan zak je terug naar de vorige.
-        Bots hebben geen invloed op je Degen-rating.
+        Ook deze wedstrijden beïnvloeden je Glicko-2-rating.
       </p>
 
       {hasActiveMatch && (
