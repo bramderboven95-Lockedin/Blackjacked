@@ -458,8 +458,9 @@ export const BOTS = [
   { name: "The House", hp: 145, atk: 19, def: 17, chips: 5, ai: "optimal" },
 ];
 
-export function buildBotPlayer(botIndex: number): Player {
-  const bot = BOTS[botIndex];
+export type BotDefinition = { name: string; hp: number; atk: number; def: number; chips: number; ai: string };
+export function buildBotPlayer(botIndex: number, override?: BotDefinition): Player {
+  const bot = override || BOTS[botIndex];
   return {
     name: bot.name,
     hp: bot.hp,
