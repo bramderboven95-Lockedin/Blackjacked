@@ -21,7 +21,7 @@ export async function POST(
   const { data: match } = await admin
     .from("matches")
     .select(
-      "id, player_a, player_b, is_campaign, state, finalized, updated_at"
+      "id, player_a, player_b, is_campaign, mode, state, finalized, updated_at"
     )
     .eq("id", params.id)
     .single();
@@ -55,6 +55,14 @@ export async function POST(
   }
 
   let state = match.state as MatchState;
+  // A previous request may have saved the final state but lost its HTTP response.
+  // Retrying finalization is safe because the SQL transaction is idempotent.
+  if (state.matchOver) {
+    try { await finalizeMatch(params.id); }
+    catch (error) {return NextResponse.json({error:error instanceof Error?error.message:"Finalize failed"},{status:500});}
+    return NextResponse.json({ok:true,state});
+  }
+
 
   switch (body.type) {
     case "BET": {
@@ -106,6 +114,7 @@ export async function POST(
     }
 
     case "AUTO_TIMEOUT": {
+      if (match.mode !== "pvp") return NextResponse.json({ok:true,state,skipped:true});
       const IDLE_MS = 45_000;
 
       const idleFor =
@@ -170,27 +179,19 @@ export async function POST(
   state = settle(state);
   state = playBotTurns(state);
 
-  const { error: updateError } = await admin
-    .from("matches")
-    .update({
-      state,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", params.id);
-
-  if (updateError) {
-    return NextResponse.json(
-      { error: updateError.message },
-      { status: 500 }
-    );
-  }
-
-  if (state.matchOver) {
-    await finalizeMatch(params.id, state);
-  }
-
-  return NextResponse.json({
-    ok: true,
-    state,
+  const { data: committed, error: updateError } = await admin.rpc("commit_match_action_v3",{
+    p_id:params.id,p_updated_at:match.updated_at,p_state:state
   });
+  if (updateError) return NextResponse.json({error:updateError.message},{status:500});
+  if (!committed) {
+    // Another request committed first. Never overwrite its state with a stale copy.
+    return NextResponse.json({error:"Match changed; refresh and retry."},{status:409});
+  }
+  if (state.matchOver) {
+    try {await finalizeMatch(params.id);}
+    catch(error){
+      return NextResponse.json({error:error instanceof Error?error.message:"Match opgeslagen; finalize opnieuw proberen."},{status:500});
+    }
+  }
+  return NextResponse.json({ok:true,state});
 }
