@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { MatchState, SubHand } from "@/lib/game/reducer";
@@ -15,10 +15,13 @@ type MatchRow = {
   state: MatchState;
   finalized: boolean;
   updated_at: string;
+  mode?: "pvp" | "campaign" | "random";
+  bot_rating?: number | null;
+  rewards?: {a?:{tokens:number;rating:number;bounty:number;streakBonus?:number};b?:{tokens:number;rating:number;bounty:number;streakBonus?:number}};
 };
 
 export default function GameBoard({ matchId, userId }: { matchId: string; userId: string }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [row, setRow] = useState<MatchRow | null>(null);
   const [acting, setActing] = useState(false);
   const [confirmForfeit, setConfirmForfeit] = useState(false);
@@ -59,12 +62,13 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
         if (res.ok) {
           const json = await res.json();
           setRow((r) => (r ? { ...r, state: json.state } : r));
-        }
+          if (json.state?.matchOver) await load();
+        } else if (res.status === 409) await load();
       } finally {
         setActing(false);
       }
     },
-    [matchId]
+    [matchId, load]
   );
 
   // Silent version for background pings (auto-continue, idle timeout) —
@@ -80,9 +84,10 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
       if (res.ok) {
         const json = await res.json();
         setRow((r) => (r ? { ...r, state: json.state } : r));
-      }
+        if (json.state?.matchOver) await load();
+      } else if (res.status === 409) await load();
     },
-    [matchId]
+    [matchId, load]
   );
 
   // Auto-continue after a round result / round-over banner, same pacing as
@@ -117,6 +122,14 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.phase, state?.round, state?.roundNum, state?.isCampaign, state?.matchOver]);
+
+  // A final state may have been committed right before a network failure.
+  // Retry the idempotent reward finalizer until the match row is finalized.
+  useEffect(() => {
+    if (!row?.state?.matchOver || row.finalized) return;
+    const timer=setTimeout(()=>silentAct({type:"FINALIZE"}),3000);
+    return ()=>clearTimeout(timer);
+  },[row?.state?.matchOver,row?.finalized,silentAct]);
 
   async function forfeit() {
     setConfirmForfeit(false);
@@ -173,7 +186,8 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
   </Link>
 
   <span className="text-dim text-xs">
-    {state.isCampaign ? "CAMPAIGN" : "1 VS 1"}
+    {row.mode === "random" ? "RANDOM CHALLENGER" : state.isCampaign ? "CAMPAIGN" : "1 VS 1"}
+    {row.bot_rating != null && ` · Bot ${row.bot_rating} R`}
   </span>
 </div>
 
@@ -222,9 +236,16 @@ export default function GameBoard({ matchId, userId }: { matchId: string; userId
               : "Je hebt verloren."}{" "}
             &middot; {state.roundsWon[0]}&ndash;{state.roundsWon[1]}
           </p>
+          {row.finalized && (myIndex === 0 ? row.rewards?.a : row.rewards?.b) && (
+            <div className="bg-bgalt rounded-lg p-3 w-full flex justify-center gap-4 font-bold text-sm">
+              <span className="text-goldbright">🪙 +{(myIndex === 0 ? row.rewards?.a : row.rewards?.b)?.tokens || 0} tokens</span>
+              <span className="text-teal">{((myIndex === 0 ? row.rewards?.a : row.rewards?.b)?.rating || 0) >= 0 ? "+" : ""}{(myIndex === 0 ? row.rewards?.a : row.rewards?.b)?.rating || 0} rating</span>
+              {((myIndex === 0 ? row.rewards?.a : row.rewards?.b)?.bounty || 0)>0 && <span>🎯 BOUNTY +10</span>}
+            </div>
+          )}
           <div className="flex gap-2 w-full">
-            <Link href={state.isCampaign ? "/campaign" : "/friends"} className="btn-ghost flex-1 text-center">
-              {state.isCampaign ? "Ladder" : "Vrienden"}
+            <Link href={row.mode === "random" ? "/challenger" : state.isCampaign ? "/campaign" : "/friends"} className="btn-ghost flex-1 text-center">
+              {row.mode === "random" ? "Challenger" : state.isCampaign ? "Ladder" : "Vrienden"}
             </Link>
             <Link href="/dashboard" className="btn-primary flex-1 text-center">
               Hoofdmenu
