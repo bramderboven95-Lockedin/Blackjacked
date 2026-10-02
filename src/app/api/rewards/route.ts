@@ -1,3 +1,6 @@
+
+    
+  
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/profile";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -57,5 +60,16 @@ export async function GET(){
     claimed:claimed.has(`achievement:${a.id}`)})),
    milestones:MILESTONES.map(m=>({...m,unlocked:(profile.campaign_defeated||[]).includes(m.index),claimed:claimed.has(`milestone:${m.id}`)})),
    streak:profile.streak||0});
- } catch(error){return NextResponse.json({error:error instanceof Error?error.message:'Kon beloningen niet laden. Controleer migratie 0004.'},{status:500});}
+ } catch (error: unknown) {
+  // Supabase/PostgREST errors are plain objects, not instanceof Error.
+  // Preserve their message/code, otherwise every DB failure looks like a missing migration.
+  const detail = error && typeof error === 'object'
+    ? (error as { message?: string; details?: string; hint?: string; code?: string })
+    : null;
+  const message = detail?.message || (error instanceof Error ? error.message : String(error));
+  const code = detail?.code || 'REWARDS_ERROR';
+  console.error('GET /api/rewards failed', { message, code, details: detail?.details, hint: detail?.hint });
+  return NextResponse.json({ error: `${code}: ${message}` }, { status: 500 });
+ }
 }
+
