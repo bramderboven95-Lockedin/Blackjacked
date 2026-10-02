@@ -10,6 +10,7 @@ import type { RelicLevels } from "./relics";
 // ============================================================================
 import {
   BOTS,
+  BotDefinition,
   Card,
   Player,
   botDecideAction,
@@ -80,6 +81,8 @@ export interface MatchState {
   players: [Player, Player];
   isCampaign: boolean;
   botIndex: number | null;
+  botDetails?: BotDefinition | null;
+  matchMode?: "pvp" | "campaign" | "random";
   matchOver: boolean;
   winnerIndex: number | null; // 0, 1, or -1 for draw
   roundsWon: [number, number];
@@ -96,7 +99,7 @@ export interface MatchState {
 }
 
 export type Action =
-  | { type: "INIT"; nameA: string; nameB?: string; classA: string; classB?: string; perksA: string[]; perksB?: string[]; relicLevelsA?: RelicLevels; relicLevelsB?: RelicLevels; equippedRelicsA?: string[]; equippedRelicsB?: string[]; isCampaign?: boolean; botIndex?: number }
+  | { type: "INIT"; nameA: string; nameB?: string; classA: string; classB?: string; perksA: string[]; perksB?: string[]; relicLevelsA?: RelicLevels; relicLevelsB?: RelicLevels; equippedRelicsA?: string[]; equippedRelicsB?: string[]; isCampaign?: boolean; botIndex?: number; botOverride?: BotDefinition; matchMode?: "pvp" | "campaign" | "random" }
   | { type: "BET"; player: 0 | 1; amount: number }
   | { type: "CHOOSE"; player: 0 | 1; subIndex: number; choice: "hit" | "stand" | "double" | "split" }
   | { type: "RESOLVE_ROUND" }
@@ -148,7 +151,7 @@ export function matchReducer(state: MatchState | null, action: Action): MatchSta
   switch (action.type) {
     case "INIT": {
       const players: [Player, Player] = action.isCampaign
-        ? [buildPlayer(action.nameA, action.classA, action.perksA, action.relicLevelsA, action.equippedRelicsA), buildBotPlayer(action.botIndex!)]
+        ? [buildPlayer(action.nameA, action.classA, action.perksA, action.relicLevelsA, action.equippedRelicsA), buildBotPlayer(action.botIndex!, action.botOverride)]
         : [
             buildPlayer(action.nameA, action.classA, action.perksA, action.relicLevelsA, action.equippedRelicsA),
             buildPlayer(action.nameB!, action.classB!, action.perksB || [], action.relicLevelsB, action.equippedRelicsB),
@@ -157,6 +160,8 @@ export function matchReducer(state: MatchState | null, action: Action): MatchSta
         players,
         isCampaign: !!action.isCampaign,
         botIndex: action.isCampaign ? action.botIndex! : null,
+        botDetails: action.botOverride || null,
+        matchMode: action.matchMode || (action.isCampaign ? "campaign" : "pvp"),
         matchOver: false,
         winnerIndex: null,
         roundsWon: [0, 0],
@@ -438,7 +443,7 @@ export function playBotTurns(state: MatchState): MatchState {
   let guard = 0;
   while (!s.matchOver && guard++ < 20) {
     if (s.phase === "betting" && s.pendingBets[1] == null) {
-      const bot = BOTS[botIndex];
+      const bot = s.botDetails || BOTS[botIndex];
       s = matchReducer(s, { type: "BET", player: 1, amount: botDecideBet(bot.ai, s.players[1].chips) });
       s = settle(s);
       continue;
@@ -447,7 +452,7 @@ export function playBotTurns(state: MatchState): MatchState {
       const subs = s.hands[1];
       const idx = subs.findIndex((h, si) => !h.done && s.pending[1][si] == null);
       if (idx === -1) break;
-      const bot = BOTS[botIndex];
+      const bot = s.botDetails || BOTS[botIndex];
       const oppSubs = s.hands[0];
       let oppBest: number | null = null;
       for (const h of oppSubs) {
