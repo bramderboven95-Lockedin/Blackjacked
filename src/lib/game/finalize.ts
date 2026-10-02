@@ -175,7 +175,7 @@ function toAchInput(u: any) {
     rating: u.rating ?? 1500,
     campaign_pos: u.campaign_pos ?? 0,
     campaign_wins: u.campaign_wins ?? 0,
-    perks: u.perks ?? [],
+    perks: [...new Set([...(u.perks ?? []), ...Object.keys(u.relic_levels ?? {}).filter(k => Number(u.relic_levels[k]) > 0)])],
     tokens_earned_total: u.tokens_earned_total ?? 0,
     achievements: u.achievements ?? [],
     stats: u.stats ?? { blackjacks: 0, busts: 0, doubles: 0, splits: 0, kos: 0, comebackWins: 0, ironWillSaves: 0 },
