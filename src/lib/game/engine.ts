@@ -1,3 +1,4 @@
+import { RELICS, RelicLevels, validRelics, relicValue } from "./relics";
 // ============================================================================
 // BLACKJACKED — core game engine
 // Pure, deterministic, side-effect-free (except createShuffledDeck's RNG).
@@ -382,7 +383,7 @@ export const PERK_TIERS = [
   { id: "groot", label: "Groot" },
 ] as const;
 
-export function buildPlayer(name: string, classId: string, perkIds: string[]): Player {
+export function buildPlayer(name: string, classId: string, perkIds: string[], relicLevels: RelicLevels = {}, equippedRelics: string[] = []): Player {
   const cls = CLASS_DEFS[classId] || CLASS_DEFS.dealer;
   let hp = 100 + (cls.dHp || 0);
   const atk = 10 + (cls.dAtk || 0);
@@ -405,12 +406,22 @@ export function buildPlayer(name: string, classId: string, perkIds: string[]): P
     if (perk.comebackThreshold) comebackThreshold = Math.max(comebackThreshold, perk.comebackThreshold);
     if (perk.ironWill) ironWill = true;
   }
+  // Relics are separate from the legacy perk inventory. The match snapshots
+  // the equipped levels on INIT, so shop upgrades never modify a live match.
+  const active = validRelics(relicLevels, equippedRelics);
+  const bonus = (id:string) => active.includes(id) ? relicValue(id, Number(relicLevels[id as keyof RelicLevels] || 0)) : 0;
+  hp += bonus("steady_hand");
+  chips += bonus("beginners_luck");
+  bjBonus += bonus("bj_instinct");
+  bustGuard += bonus("soft_landing");
+  comebackThreshold = Math.max(comebackThreshold, bonus("comeback_kid"));
+  ironWill = ironWill || active.includes("iron_will");
   return {
     name,
     hp,
     maxHp: hp,
-    atk: atk + (perkIds || []).reduce((s, pid) => s + (PERK_DEFS.find((p) => p.id === pid)?.dAtk || 0), 0),
-    def: def + (perkIds || []).reduce((s, pid) => s + (PERK_DEFS.find((p) => p.id === pid)?.dDef || 0), 0),
+    atk: atk + bonus("sharp_eye") + (perkIds || []).reduce((s, pid) => s + (PERK_DEFS.find((p) => p.id === pid)?.dAtk || 0), 0),
+    def: def + bonus("thick_skin") + (perkIds || []).reduce((s, pid) => s + (PERK_DEFS.find((p) => p.id === pid)?.dDef || 0), 0),
     chips,
     baseChips: chips,
     bjBonus,
@@ -421,7 +432,7 @@ export function buildPlayer(name: string, classId: string, perkIds: string[]): P
     ironWill,
     ironWillUsed: false,
     classId: cls.id,
-    perks: [...(perkIds || [])],
+    perks: [...(perkIds || []), ...active.map(id=>`${RELICS.find(r=>r.id===id)?.name} Lv.${relicLevels[id as keyof RelicLevels]}`)],
     bjWins: 0,
     isBot: false,
   };
