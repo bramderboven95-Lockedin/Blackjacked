@@ -73,6 +73,17 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
+      <div className="panel flex flex-col gap-2">
+        <h2 className="font-display text-lg text-gold">🎲 Random Challenger</h2>
+        <p className="text-sm text-dim">Neem het op tegen een willekeurige bot met eigen ATK, DEF, HP en Glicko-rating.</p>
+        <Link href="/challenger" className="btn-primary text-center">RANDOM CHALLENGER</Link>
+      </div>
+      <div className="panel flex flex-col gap-2">
+        <h2 className="font-display text-lg text-gold">🎯 Missions & Rewards</h2>
+        <p className="text-sm text-dim">Dagelijkse missies, wekelijkse uitdagingen, achievements en Campaign-beloningen.</p>
+        <Link href="/rewards" className="btn-ghost text-center">BEKIJK BELONINGEN</Link>
+      </div>
+
       <div className="panel">
         <div className="flex items-center justify-between mb-2">
           <h2 className="font-display text-lg text-gold">Top 5</h2>
