@@ -1,4 +1,3 @@
-
 import type { BotDefinition } from "./engine";
 
 /**
@@ -18,7 +17,6 @@ import type { BotDefinition } from "./engine";
  * 1000 matches per combination.
  */
 
-// New Campaign ratings based on simulations.
 export const CAMPAIGN_BOT_RATINGS = [
   1158,
   1251,
@@ -41,7 +39,7 @@ const clamp = (
 ) => Math.min(high, Math.max(low, n));
 
 /**
- * Calculate the estimated rating of a Random Challenger.
+ * Rating van Random Challengers.
  *
  * Easy:
  * ATK 1–19
@@ -56,25 +54,48 @@ const clamp = (
 export function randomBotRating(
   bot: BotDefinition
 ): number {
-
+  /**
+   * BotDefinition heeft geen apart difficulty-veld.
+   * De Random Challenger route maakt Easy en Hard
+   * al met aparte statranges.
+   *
+   * Daarom herkennen we Hard aan zijn stats.
+   */
   const hard =
-    bot.difficulty === "hard" ||
-    (
-      bot.difficulty !== "easy" &&
-      bot.atk >= 20 &&
-      bot.def >= 20 &&
-      bot.hp >= 151
-    );
+    bot.atk >= 20 &&
+    bot.def >= 20 &&
+    bot.hp >= 151;
 
   // EASY CHALLENGER
   if (!hard) {
+    const a = clamp(
+      (bot.atk - 1) / 18,
+      0,
+      1
+    );
 
-    const a = clamp((bot.atk - 1) / 18, 0, 1);
-    const d = clamp((bot.def - 1) / 18, 0, 1);
-    const h = clamp((bot.hp - 50) / 100, 0, 1);
-    const c = clamp((bot.chips - 1) / 2, 0, 1);
+    const d = clamp(
+      (bot.def - 1) / 18,
+      0,
+      1
+    );
 
-    const ai = bot.ai === "basic" ? 1 : 0;
+    const h = clamp(
+      (bot.hp - 50) / 100,
+      0,
+      1
+    );
+
+    const c = clamp(
+      (bot.chips - 1) / 2,
+      0,
+      1
+    );
+
+    const ai =
+      bot.ai === "basic"
+        ? 1
+        : 0;
 
     const estimate =
       815.75 +
@@ -88,16 +109,39 @@ export function randomBotRating(
       52.13 * d * d;
 
     return Math.round(
-      clamp(estimate, 800, 2300)
+      clamp(
+        estimate,
+        800,
+        2300
+      )
     );
   }
 
   // HARD CHALLENGER
 
-  const a = clamp((bot.atk - 20) / 20, 0, 1);
-  const d = clamp((bot.def - 20) / 20, 0, 1);
-  const h = clamp((bot.hp - 151) / 199, 0, 1);
-  const c = clamp((bot.chips - 2) / 3, 0, 1);
+  const a = clamp(
+    (bot.atk - 20) / 20,
+    0,
+    1
+  );
+
+  const d = clamp(
+    (bot.def - 20) / 20,
+    0,
+    1
+  );
+
+  const h = clamp(
+    (bot.hp - 151) / 199,
+    0,
+    1
+  );
+
+  const c = clamp(
+    (bot.chips - 2) / 3,
+    0,
+    1
+  );
 
   const estimate =
     2246.03 +
@@ -110,17 +154,17 @@ export function randomBotRating(
     253.35 * d * d;
 
   return Math.round(
-    clamp(estimate, 2200, 3600)
+    clamp(
+      estimate,
+      2200,
+      3600
+    )
   );
 }
 
 /**
- * Dynamic Glicko protection for bot matches.
- *
- * Beating a stronger bot can grant more rating.
- * Losing against a stronger bot costs relatively little.
- *
- * PvP remains unchanged.
+ * Bescherming tegen extreme ratingwijzigingen
+ * bij wedstrijden tegen bots.
  */
 export function protectedBotRating(
   previous: {
@@ -137,35 +181,49 @@ export function protectedBotRating(
 
   opponentRating: number
 ) {
-
   const difference =
-    opponentRating - previous.rating;
+    opponentRating -
+    previous.rating;
 
   const expectedWin =
-    1 / (
-      1 + Math.pow(10, difference / 400)
+    1 /
+    (
+      1 +
+      Math.pow(
+        10,
+        difference / 400
+      )
     );
 
-  const maxGain = Math.round(
-    8 + 65 * (1 - expectedWin)
-  );
+  const maxGain =
+    Math.round(
+      8 +
+      65 *
+        (1 - expectedWin)
+    );
 
-  const maxLoss = Math.round(
-    8 + 65 * expectedWin
-  );
+  const maxLoss =
+    Math.round(
+      8 +
+      65 *
+        expectedWin
+    );
 
   const actualChange =
-    calculated.rating - previous.rating;
+    calculated.rating -
+    previous.rating;
 
-  const adjustedChange = clamp(
-    actualChange,
-    -maxLoss,
-    maxGain
-  );
+  const adjustedChange =
+    clamp(
+      actualChange,
+      -maxLoss,
+      maxGain
+    );
 
   return {
     rating: Math.round(
-      previous.rating + adjustedChange
+      previous.rating +
+      adjustedChange
     ),
 
     rd: Math.max(
