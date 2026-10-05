@@ -1145,10 +1145,10 @@ function PlayerPanel({
           null
     );
 
-  const classDef =
-    CLASS_DEFS[
-      p.classId
-    ];
+ const classDef =
+  p.classId
+    ? CLASS_DEFS[p.classId]
+    : undefined;
 
   const hpPercent =
     Math.max(
