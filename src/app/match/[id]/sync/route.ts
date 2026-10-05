@@ -5,15 +5,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
   _request: Request,
-  context: {
-    params: Promise<{
-      id: string;
-    }>;
-  }
+  { params }: { params: { id: string } }
 ) {
   const { user } = await requireUser();
-  const { id } = await context.params;
-
   const admin = createAdminClient();
 
   const { data: match, error } = await admin
@@ -28,10 +22,11 @@ export async function GET(
         state,
         finalized,
         updated_at,
-        rewards
+        rewards,
+        bot_rating
       `
     )
-    .eq("id", id)
+    .eq("id", params.id)
     .single();
 
   if (error || !match) {
@@ -41,6 +36,9 @@ export async function GET(
       },
       {
         status: 404,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       }
     );
   }
@@ -56,6 +54,9 @@ export async function GET(
       },
       {
         status: 403,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       }
     );
   }
@@ -66,7 +67,10 @@ export async function GET(
     },
     {
       headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
       },
     }
   );
